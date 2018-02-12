@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"log"
 )
 
 // Controller - main structure
@@ -36,7 +37,10 @@ func NewController(w *Window, d time.Duration) *Controller {
 }
 
 func (c *Controller) readCsv(filePath string) {
-	f, _ := os.Open(filePath)
+	f, err := os.Open(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer f.Close()
 	// Create a new reader.
 	r := csv.NewReader(bufio.NewReader(f))
