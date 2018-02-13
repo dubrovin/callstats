@@ -4,36 +4,41 @@ import (
 	"bufio"
 	"encoding/csv"
 	"fmt"
+	"github.com/dubrovin/callstats/server"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"path/filepath"
 )
 
 // Controller - main structure
 type Controller struct {
-	window   *Window
-	delay    time.Duration
-	elements chan int
-	medians  chan int
-	errors   chan error
-	addDelay chan time.Duration
-	wg       sync.WaitGroup
+	window    *Window
+	delay     time.Duration
+	elements  chan int
+	medians   chan int
+	errors    chan error
+	addDelay  chan time.Duration
+	getMedian chan bool
+	wg        sync.WaitGroup
+	server    *server.Server
 }
 
 // NewController -
-func NewController(w *Window, d time.Duration) *Controller {
+func NewController(w *Window, d time.Duration, server *server.Server) *Controller {
 	return &Controller{
-		window:   w,
-		delay:    d,
-		elements: make(chan int, w.maxSize),
-		medians:  make(chan int, w.maxSize),
-		errors:   make(chan error, w.maxSize),
-		addDelay: make(chan time.Duration),
+		window:    w,
+		delay:     d,
+		elements:  make(chan int, w.maxSize),
+		medians:   make(chan int, w.maxSize),
+		errors:    make(chan error, w.maxSize),
+		addDelay:  make(chan time.Duration, w.maxSize),
+		getMedian: make(chan bool, w.maxSize),
+		server:    server,
 	}
 }
 
@@ -45,7 +50,6 @@ func (c *Controller) readCsv(filePath string) {
 	defer f.Close()
 	// Create a new reader.
 	r := csv.NewReader(bufio.NewReader(f))
-	fmt.Println("RUN READ")
 	defer c.wg.Done()
 
 	ticker := time.NewTicker(c.delay)
@@ -58,6 +62,7 @@ func (c *Controller) readCsv(filePath string) {
 				close(c.elements)
 				return
 			}
+			log.Println("readCSV: record=", record)
 			for value := range record {
 				i, err := strconv.Atoi(strings.Trim(record[value], "\r"))
 				if err != nil {
@@ -68,7 +73,9 @@ func (c *Controller) readCsv(filePath string) {
 
 			}
 		case d := <-c.addDelay:
+			log.Println("readCSV: addDelay=", d)
 			c.delay = c.delay + d
+			c.server.Delay <- c.delay
 		}
 	}
 
@@ -93,7 +100,9 @@ func (c *Controller) writeCsv(filePath string) {
 
 	defer c.wg.Done()
 	for median := range c.medians {
+		log.Println("writeCSV: median=", median)
 		w.Write([]string{strconv.Itoa(median)})
+		w.Flush()
 	}
 
 }
@@ -102,22 +111,33 @@ func (c *Controller) windowRunner() {
 	defer c.wg.Done()
 	defer close(c.medians)
 	defer close(c.errors)
-	for n := range c.elements {
-		c.window.Add(n)
-		c.medians <- c.window.Median()
+
+	for {
+		select {
+		case n, ok := <-c.elements:
+			log.Println("windowRunner elements: ", n, ok)
+			if !ok {
+				return
+			}
+			c.window.Add(n)
+			c.medians <- c.window.Median()
+		case <-c.getMedian:
+			c.server.Median <- c.window.Median()
+
+		}
 	}
+
 }
 
 func (c *Controller) errorReader() {
-	fmt.Println("RUN ERROR READER")
 	defer c.wg.Done()
 	for err := range c.errors {
-		fmt.Println(err)
+		log.Println(err)
 	}
 }
 
 // Run - runs all goroutines
-func (c *Controller) Run(filePath string) {
+func (c *Controller) Run(filePath, addr string) {
 	c.wg.Add(1)
 	go c.errorReader()
 
@@ -129,6 +149,9 @@ func (c *Controller) Run(filePath string) {
 
 	c.wg.Add(1)
 	go c.writeCsv(fmt.Sprintf("out/%v_out.csv", time.Now().Unix()))
-
+	c.wg.Add(2)
+	c.registerHandlers()
+	c.server.Run()
 	c.wg.Wait()
+
 }

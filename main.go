@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/dubrovin/callstats/controller"
+	"github.com/dubrovin/callstats/server"
 	"log"
 	"time"
 )
@@ -22,8 +23,8 @@ func main() {
 	}
 	maxSize := *windowSize
 	w := controller.NewWindow(maxSize)
-
-	c := controller.NewController(w, intervalDelay)
-	c.Run(*filePath)
+	s := server.NewServer(*addr, maxSize)
+	c := controller.NewController(w, intervalDelay, s)
+	c.Run(*filePath, *addr)
 
 }
