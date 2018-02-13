@@ -5,12 +5,13 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"log"
+	"path/filepath"
 )
 
 // Controller - main structure
@@ -74,7 +75,15 @@ func (c *Controller) readCsv(filePath string) {
 }
 
 func (c *Controller) writeCsv(filePath string) {
-	f, _ := os.Create(filePath)
+
+	f, err := os.Create(filePath)
+	if !os.IsExist(err) {
+		os.MkdirAll(filepath.Dir(filePath), os.ModePerm)
+		f, err = os.Create(filePath)
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer f.Close()
 	w := csv.NewWriter(bufio.NewWriter(f))
 
@@ -84,7 +93,7 @@ func (c *Controller) writeCsv(filePath string) {
 
 	defer c.wg.Done()
 	for median := range c.medians {
-		w.Write([]string{fmt.Sprintf("%s%s", strconv.Itoa(median), "")})
+		w.Write([]string{strconv.Itoa(median)})
 	}
 
 }
@@ -107,7 +116,7 @@ func (c *Controller) errorReader() {
 	}
 }
 
-// Run - runs all gorutines
+// Run - runs all goroutines
 func (c *Controller) Run(filePath string) {
 	c.wg.Add(1)
 	go c.errorReader()
@@ -119,7 +128,7 @@ func (c *Controller) Run(filePath string) {
 	go c.windowRunner()
 
 	c.wg.Add(1)
-	go c.writeCsv(fmt.Sprintf("tests/%v_out.csv", time.Now().Unix()))
+	go c.writeCsv(fmt.Sprintf("out/%v_out.csv", time.Now().Unix()))
 
 	c.wg.Wait()
 }
